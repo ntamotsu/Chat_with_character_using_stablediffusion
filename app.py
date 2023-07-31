@@ -20,14 +20,16 @@ class Chat(Base):
     __tablename__ = "chats"
 
     id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(Integer, default=0)
     role = Column(String(10))
     message = Column(TEXT)
     timestamp = Column(DateTime, default=datetime.now)
 
 class ChatObject:
     """チャットオブジェクト"""
-    def __init__(self, id, role, message, timestamp):
+    def __init__(self, id, thread_id, role, message, timestamp):
         self.id = id
+        self.thread_id = thread_id
         self.role = role
         self.message = message
         self.timestamp = timestamp
@@ -39,7 +41,7 @@ def create_table_if_not_exists():
 def fetch_chat_history(session):
     """データベースからチャット履歴を取得する"""
     result = session.query(Chat).order_by(Chat.id.asc()).all()
-    return [ChatObject(chat.id, chat.role, chat.message, chat.timestamp) for chat in result]
+    return [ChatObject(chat.id, chat.thread_id, chat.role, chat.message, chat.timestamp) for chat in result]
 
 def save_chat(session, role, message):
     """ユーザーのメッセージとGPTからの返信をデータベースに保存する"""
@@ -50,7 +52,7 @@ def save_chat(session, role, message):
 def get_latest_chats(session):
     """データベースから最新のチャット履歴を取得する"""
     result = session.query(Chat).order_by(Chat.id.desc()).limit(MAX_HISTORY).all()
-    return [ChatObject(chat.id, chat.role, chat.message, chat.timestamp) for chat in result[::-1]]
+    return [ChatObject(chat.id, chat.thread_id, chat.role, chat.message, chat.timestamp) for chat in result[::-1]]
 
 def get_gpt_resp(user_msg, history):
     """GPTとのチャットを行う"""
@@ -63,20 +65,26 @@ def get_gpt_resp(user_msg, history):
 
 def main():
     """Streamlitアプリケーションのメイン関数"""
-    st.set_page_config(page_title='Chat with GPT', layout='wide')
-    st.sidebar.title("Chat with GPT")
-    openai_api_key = st.sidebar.text_input("Enter your OpenAI API key", type="password")
-    set_button = st.sidebar.button("Set API key")
-    user_msg = st.text_input("Enter your message")
-    send_button = st.button("Send")
-    chat_hist_area = st.empty()
+    st.set_page_config(page_title='Chat with GPT', page_icon=':robot_face:', layout='wide')
+    with st.sidebar:
+        st.title("Chat with GPT")
+        user_msg = st.text_input("Enter your message", key="user_msg")
+        send_button = st.button("Send")
+        openai_api_key = st.text_input("Enter your OpenAI API key", type="password")
+        set_button = st.button("Set API key")
+    st.header("Chat History")
 
     session = SessionLocal()
     create_table_if_not_exists()
 
     # チャット履歴を表示する
-    chat_hist_str = "\n".join([f"{chat.role.title()}: {chat.message}" for chat in fetch_chat_history(session)])
-    chat_hist_area.text("Chat History:\n" + chat_hist_str)
+    for chat in fetch_chat_history(session):
+        if chat.role == "user":
+            with st.chat_message(chat.role):
+                st.write(chat.message)
+        else:
+            with st.chat_message(chat.role):
+                st.write(chat.message)
 
     # APIキーを設定する
     if set_button:
@@ -89,6 +97,8 @@ def main():
 
     # ユーザーがメッセージを送信した場合
     if send_button and user_msg:
+        with st.chat_message("user"):
+            st.write(user_msg)
         history = get_latest_chats(session)
         try:
             assistant_msg = get_gpt_resp(user_msg, history)
@@ -96,10 +106,8 @@ def main():
             save_chat(session, "assistant", assistant_msg)
         except Exception as e:
             st.error(f"An error occurred: {e}")
-        finally:
-            # チャット履歴を表示する
-            chat_hist_str = "\n".join([f"{chat.role.title()}: {chat.message}" for chat in fetch_chat_history(session)])
-            chat_hist_area.text("Chat History:\n" + chat_hist_str)
+        with st.chat_message("assistant"):
+            st.write(assistant_msg)
     session.close()
 
 if __name__ == "__main__":
