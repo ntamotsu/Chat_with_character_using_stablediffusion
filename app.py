@@ -27,34 +27,34 @@ class Chat(Base):
 
 class ChatObject:
     """チャットオブジェクト"""
-    def __init__(self, id, thread_id, role, message, timestamp):
+    def __init__(self, id: int, thread_id: int, role: str, message: str, timestamp: datetime):
         self.id = id
         self.thread_id = thread_id
         self.role = role
         self.message = message
         self.timestamp = timestamp
 
-def create_table_if_not_exists():
+def create_table_if_not_exists() -> None:
     """テーブルが存在しない場合は、chatsテーブルを作成する"""
     Base.metadata.create_all(bind=engine)
 
-def fetch_chat_history(session):
+def fetch_chat_history(session: SessionLocal) -> list[ChatObject]:
     """データベースからチャット履歴を取得する"""
     result = session.query(Chat).order_by(Chat.id.asc()).all()
     return [ChatObject(chat.id, chat.thread_id, chat.role, chat.message, chat.timestamp) for chat in result]
 
-def save_chat(session, role, message):
-    """ユーザーのメッセージとGPTからの返信をデータベースに保存する"""
+def save_chat(session: SessionLocal, role: str, message: str) -> None:
+    """メッセージ1つをデータベースに保存する"""
     chat = Chat(role=role, message=message)
     session.add(chat)
     session.commit()
 
-def get_latest_chats(session):
+def get_latest_chats(session: SessionLocal) -> list[ChatObject]:
     """データベースから最新のチャット履歴を取得する"""
     result = session.query(Chat).order_by(Chat.id.desc()).limit(MAX_HISTORY).all()
     return [ChatObject(chat.id, chat.thread_id, chat.role, chat.message, chat.timestamp) for chat in result[::-1]]
 
-def get_gpt_resp(user_msg, history):
+def get_gpt_resp(user_msg: str, history: list[ChatObject]) -> str:
     """GPTとのチャットを行う"""
     history_dict = [{"role": chat.role, "content": chat.message} for chat in history]
     response = openai.ChatCompletion.create(
