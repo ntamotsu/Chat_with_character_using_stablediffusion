@@ -9,6 +9,11 @@ from datetime import datetime
 # 定数の定義
 DATABASE_URL = "sqlite:///chat.db"  # データベースのパス
 MAX_HISTORY = 5  # ChatGPT APIに突っ込む会話履歴数(往復)
+MODEL = "gpt-3.5-turbo"
+ROLE = "role"
+USER = "user"
+ASSISTANT = "assistant"
+CONTENT = "content"
 
 # データベースのセットアップ
 engine = create_engine(DATABASE_URL)
@@ -34,6 +39,7 @@ class ChatObject:
         self.message = message
         self.timestamp = timestamp
 
+
 def create_table_if_not_exists() -> None:
     """テーブルが存在しない場合は、chatsテーブルを作成する"""
     Base.metadata.create_all(bind=engine)
@@ -56,19 +62,20 @@ def get_latest_chats(session: SessionLocal) -> list[ChatObject]:
 
 def get_gpt_resp(user_msg: str, history: list[ChatObject]) -> str:
     """GPTとのチャットを行う"""
-    history_dict = [{"role": chat.role, "content": chat.message} for chat in history]
+    history_dict = [{ROLE: chat.role, CONTENT: chat.message} for chat in history]
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=history_dict + [{"role": "user", "content": user_msg}]
+        model=MODEL,
+        messages=history_dict + [{ROLE: USER, CONTENT: user_msg}]
     )
     return response.choices[0].message.content
+
 
 def main():
     """Streamlitアプリケーションのメイン関数"""
     st.set_page_config(page_title='Chat with GPT', page_icon=':robot_face:', layout='wide')
     with st.sidebar:
         st.title("Chat with GPT")
-        user_msg = st.text_input("Enter your message", key="user_msg")
+        user_msg = st.text_input("Enter your message")
         send_button = st.button("Send")
         openai_api_key = st.text_input("Enter your OpenAI API key", type="password")
         set_button = st.button("Set API key")
@@ -79,12 +86,8 @@ def main():
 
     # チャット履歴を表示する
     for chat in fetch_chat_history(session):
-        if chat.role == "user":
-            with st.chat_message(chat.role):
-                st.write(chat.message)
-        else:
-            with st.chat_message(chat.role):
-                st.write(chat.message)
+        with st.chat_message(chat.role):
+            st.write(chat.message)
 
     # APIキーを設定する
     if set_button:
@@ -97,16 +100,16 @@ def main():
 
     # ユーザーがメッセージを送信した場合
     if send_button and user_msg:
-        with st.chat_message("user"):
+        with st.chat_message(USER):
             st.write(user_msg)
         history = get_latest_chats(session)
         try:
             assistant_msg = get_gpt_resp(user_msg, history)
-            save_chat(session, "user", user_msg)
-            save_chat(session, "assistant", assistant_msg)
+            save_chat(session, USER, user_msg)
+            save_chat(session, ASSISTANT, assistant_msg)
         except Exception as e:
             st.error(f"An error occurred: {e}")
-        with st.chat_message("assistant"):
+        with st.chat_message(ASSISTANT):
             st.write(assistant_msg)
     session.close()
 
