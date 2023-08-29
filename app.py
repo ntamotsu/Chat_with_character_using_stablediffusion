@@ -1,4 +1,5 @@
 import os
+from typing import Generator, Union
 import streamlit as st
 import openai
 from sqlalchemy import create_engine, Column, Integer, String, TEXT, DateTime
@@ -60,14 +61,33 @@ def get_latest_chats(session: SessionLocal) -> list[ChatObject]:
     result = session.query(Chat).order_by(Chat.id.desc()).limit(MAX_HISTORY).all()
     return [ChatObject(chat.id, chat.thread_id, chat.role, chat.message, chat.timestamp) for chat in result[::-1]]
 
-def get_gpt_resp(user_msg: str, history: list[ChatObject]) -> str:
+def get_gpt_resp(user_msg: str, history: list[ChatObject], max_tokens: Integer = None, temperature: Integer = None, functions: dict = None, function_call: str = None, stream: bool = False) -> Union[Generator[dict[str, str], None, None], Generator[str, None, None], dict[str, str], str]:
     """GPTとのチャットを行う"""
     history_dict = [{ROLE: chat.role, CONTENT: chat.message} for chat in history]
     response = openai.ChatCompletion.create(
-        model=MODEL,
-        messages=history_dict + [{ROLE: USER, CONTENT: user_msg}]
+        # 値が None である引数はAPIに渡さない
+        **{k: v for k, v in {
+            "model": MODEL,
+            "messages": history_dict + [{ROLE: USER, CONTENT: user_msg}],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "functions": functions,
+            "function_call": function_call,
+            "stream": stream
+        }.items() if v is not None}
     )
-    return response.choices[0].message.content
+    
+    if stream:
+        for chunk in response:
+            if chunk.choices[0].delta.get('function_call'):
+                yield {chunk.choices[0].delta.function_call.name : chunk.choices[0].delta.function_call.arguments}
+            else:
+                yield chunk.choices[0].delta.get('content', '')
+    else:
+        if response.choices[0].message.get('function_call'):
+            yield {response.choices[0].message.function_call.name : response.choices[0].message.function_call.arguments}
+        else:
+            yield response.choices[0].message.get('content', '')
 
 
 def main():
@@ -75,11 +95,10 @@ def main():
     st.set_page_config(page_title='Chat with GPT', page_icon=':robot_face:', layout='wide')
     with st.sidebar:
         st.title("Chat with GPT")
-        user_msg = st.text_input("Enter your message")
-        send_button = st.button("Send")
         openai_api_key = st.text_input("Enter your OpenAI API key", type="password")
         set_button = st.button("Set API key")
     st.header("Chat History")
+    user_msg = st.chat_input("Enter your message")
 
     session = SessionLocal()
     create_table_if_not_exists()
@@ -90,27 +109,26 @@ def main():
             st.write(chat.message)
 
     # APIキーを設定する
-    if set_button:
+    if set_button and openai_api_key:
         openai.api_key = openai_api_key
         st.sidebar.success("Set your API key successfully!")
 
-    # メッセージが空の場合、sendボタンを非活性にする
-    if not user_msg:
-        send_button = False
-
     # ユーザーがメッセージを送信した場合
-    if send_button and user_msg:
+    if user_msg:
         with st.chat_message(USER):
-            st.write(user_msg)
+            st.markdown(user_msg)
         history = get_latest_chats(session)
         try:
-            assistant_msg = get_gpt_resp(user_msg, history)
+            with st.chat_message(ASSISTANT):
+                placeholder = st.empty()
+                assistant_msg = ""
+                for chunk in get_gpt_resp(user_msg, history, stream=True):
+                    assistant_msg += chunk
+                    placeholder.markdown(assistant_msg + "▌")
             save_chat(session, USER, user_msg)
             save_chat(session, ASSISTANT, assistant_msg)
         except Exception as e:
             st.error(f"An error occurred: {e}")
-        with st.chat_message(ASSISTANT):
-            st.write(assistant_msg)
     session.close()
 
 if __name__ == "__main__":
